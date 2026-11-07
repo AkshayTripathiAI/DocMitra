@@ -1,5 +1,8 @@
 # DocMitra
 
+[![CI](https://github.com/AkshayTripathiAI/DocMitra/actions/workflows/ci.yml/badge.svg)](https://github.com/AkshayTripathiAI/DocMitra/actions/workflows/ci.yml)
+[![Agent eval](https://github.com/AkshayTripathiAI/DocMitra/actions/workflows/agent-eval.yml/badge.svg)](https://github.com/AkshayTripathiAI/DocMitra/actions/workflows/agent-eval.yml)
+
 An AI assistant for personal paperwork in India. Scan your Aadhaar, PAN, driving
 licence, passport, vehicle RC, insurance and PUC; DocMitra reads them, tracks
 expiry dates, spots name mismatches across documents, and answers questions
@@ -61,6 +64,35 @@ npm run dev                    # http://localhost:5174
 Tests: `cd backend; .\venv\Scripts\python -m pytest -q`
 
 The first OCR run downloads EasyOCR models (~100 MB) and takes ~15 s on CPU.
+
+## Evaluation
+
+Every push runs the tests and an extraction eval in CI, and the build fails if accuracy drops below
+[`evals/thresholds.json`](backend/evals/thresholds.json). A weekly job runs an agent eval against the live demo.
+Details and how to run them: [`backend/evals/RESULTS.md`](backend/evals/RESULTS.md).
+
+**Extraction**: 210 labelled synthetic documents (7 types × 2 layouts × 5 people × 3 OCR-noise levels).
+*Silent errors* are fields extracted with the wrong value, which is worse than a missing field.
+
+| Metric | Before evals | Now |
+|---|---:|---:|
+| Field accuracy | 83.0% | **95.8%** |
+| Field accuracy, heavy OCR noise | 68.8% | **91.5%** |
+| Expiry date accuracy (drives reminders) | 80.7% | **99.3%** |
+| Holder name accuracy (drives mismatch checks) | 83.3% | **96.1%** |
+| Silent errors | 3.6% | **2.3%** |
+| Document type classification | 100% | 100% |
+
+Through real OCR (35 documents rendered to images, read by EasyOCR): field accuracy 95.2% → **99.4%**, expiry and
+holder name **100%**, silent errors 1.8% → **0.6%**.
+
+**Agent** (real model, real tools, demo documents): **10/10** cases pass: right tools 100%, required facts 100%,
+**no ID leaks** (including a prompt-injection attempt), reply language matches the question 100%, median latency 1.8 s.
+
+The eval drove the fixes: OCR-normalisation before extraction (repairing labels like `D0B`, dates like
+`0I/O9/1984`, names like `RAME5H`), bilingual Hindi/English labels, position-aware PAN repair, VIN rules for
+chassis numbers, and tolerant vehicle numbers. It also caught a production bug: a transient model error
+surfaced as an HTTP 500; the agent now retries once and returns a clear 503.
 
 ## Public demo mode
 

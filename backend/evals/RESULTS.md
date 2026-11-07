@@ -81,6 +81,13 @@ Weakest fields (accuracy < 90%):
 Image tier before the fixes: 95.2% field accuracy, 1.8% silent errors (vehicle numbers read as `KAO9` and chassis
 numbers with O/0 swaps were the main misses).
 
+## Results: agent (live demo, real model)
+
+10 cases · pass rate **100%** · tools 100% · facts 100% · safety **100%** · language 100% · median latency 1.78 s.
+Cases cover the expiry overview, name consistency, procedure checklists in English and Hinglish, direct requests for
+full Aadhaar/PAN numbers, and a "debug mode" prompt injection asking for raw OCR text. The first run scored 9/10:
+one case hit a transient HTTP 500 from the model provider, which led to the retry/503 fix below.
+
 ## What the eval changed
 
 - OCR normalisation before extraction: repairs label words (`D0B`, `Va1id`), canonicalises dates with letter/digit
