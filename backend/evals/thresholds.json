@@ -1,0 +1,12 @@
+{
+  "_comment": "CI fails if the text-tier extraction eval drops below these. Set just under current results so regressions are caught.",
+  "min": {
+    "classification_accuracy": 0.99,
+    "field_accuracy": 0.93,
+    "expiry_accuracy": 0.97,
+    "holder_name_accuracy": 0.93
+  },
+  "max": {
+    "silent_error_rate": 0.04
+  }
+}

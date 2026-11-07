@@ -204,5 +204,5 @@ def chat(body: ChatIn, request: Request):
     _rate_limit_chat(request)
     try:
         return assistant.chat(body.message, body.thread_id)
-    except assistant.LLMNotConfigured as exc:
+    except (assistant.LLMNotConfigured, assistant.AssistantUnavailable) as exc:
         raise HTTPException(503, str(exc)) from exc

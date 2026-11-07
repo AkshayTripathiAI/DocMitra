@@ -8,7 +8,8 @@ import re
 from datetime import date
 
 _DATE = r"\d{2}[/.-]\d{2}[/.-]\d{4}"
-_NAME = r"[A-Z][A-Za-z .]{2,60}"
+# Names may contain OCR digit-for-letter swaps (RAME5H); _clean_name undoes them.
+_NAME = r"[A-Z0-9][A-Za-z0-9 .]{2,60}"
 
 # Which extracted field holds the person's name / the expiry, per type.
 HOLDER_FIELD = {
@@ -53,12 +54,101 @@ def mask(value: str) -> str:
     return "".join(out)
 
 
-_AS_DIGIT = str.maketrans("OoIlSB", "001158")
+_AS_DIGIT = str.maketrans("OoIlSBZ", "0011582")
+_AS_LETTER = str.maketrans("0158 2", "OISB Z")
 
 
 def _digits(value: str) -> str:
     """Undo common OCR letter-for-digit swaps in a part that must be numeric."""
     return value.translate(_AS_DIGIT)
+
+
+def _mostly_numeric(value: str) -> str:
+    """Fix letter-for-digit swaps in IDs that are mostly digits (policy numbers)."""
+    alnum = [c for c in value if c.isalnum()]
+    if alnum and sum(c.isdigit() for c in alnum) / len(alnum) >= 0.7:
+        return _digits(value)
+    return value
+
+
+# --- OCR text normalisation, applied before extraction --------------------------------
+# Characters OCR engines commonly swap with digits, used to build fuzzy label patterns.
+_CONFUSABLE = {"o": "o0", "i": "il1", "l": "li1", "s": "s5", "b": "b8", "z": "z2"}
+_LABEL_WORDS = [
+    "DOB", "Date", "Birth", "Valid", "Validity", "Till", "Upto", "Issue", "Expiry", "Policy",
+    "Period", "Insurance", "Insured", "Name", "Father's", "Registration", "Regn", "Registered",
+    "Owner", "Owner's", "Chassis", "Engine", "Fuel", "Certificate", "Number", "Surname", "Given",
+    "Gender", "Address", "Driving", "Licence", "Passport", "Pollution", "Control", "Vehicle",
+    "Premium", "Permanent", "Account", "Income", "Department", "Identification", "Authority",
+]
+
+
+def _fuzzy_word(word: str) -> re.Pattern:
+    parts = []
+    for ch in word:
+        if ch.isalpha():
+            options = set(_CONFUSABLE.get(ch.lower(), ch.lower()))
+            parts.append("[" + "".join(sorted(re.escape(o) for o in options)) + "]")
+        else:
+            parts.append(re.escape(ch))
+    return re.compile(rf"(?<![A-Za-z0-9]){''.join(parts)}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+_LABEL_PATTERNS = [(_fuzzy_word(w), w) for w in _LABEL_WORDS]
+_FUZZY_DATE = re.compile(
+    r"(?<![A-Za-z0-9])([0-9OIlSBZ]{2})([/.\-1])([0-9OIlSBZ]{2})([/.\-1])([0-9OIlSBZ]{4})(?![A-Za-z0-9])"
+)
+_BILINGUAL = re.compile(r"[ 	]*/[ 	]*[ऀ-ॿ][ऀ-ॿ 	]*")
+
+
+def _fix_date(m: re.Match) -> str:
+    raw = m.group(0)
+    if m.group(2) == "1" and m.group(4) == "1":
+        return raw  # no real separator: probably an ID number, not a date
+    dd, mm, yyyy = (_digits(m.group(i)) for i in (1, 3, 5))
+    try:
+        date(int(yyyy), int(mm), int(dd))
+    except ValueError:
+        return raw
+    return f"{dd}/{mm}/{yyyy}"
+
+
+def normalize_ocr_text(text: str) -> str:
+    """Repair common OCR damage so the per-type patterns match.
+
+    - drop the Hindi half of bilingual labels ("Name / नाम" -> "Name")
+    - repair known label words ("D0B" -> "DOB", "Va1id" -> "Valid")
+    - canonicalise dates with letter-for-digit swaps ("0I/O9/1984" -> "01/09/1984")
+    """
+    text = _BILINGUAL.sub("", text)
+    for pattern, word in _LABEL_PATTERNS:
+        text = pattern.sub(word, text)
+    return _FUZZY_DATE.sub(_fix_date, text)
+
+
+_REG = re.compile(
+    r"(?<![A-Za-z0-9])([A-Z]{2})\s?([0-9OIl]{1,2})\s?([A-Z]{1,3})\s?([0-9OIlSB]{1,4})(?![A-Za-z0-9])"
+)
+_PAN = re.compile(r"(?<![A-Za-z0-9])([A-Z0-9]{3}[PCHFATBLJG][A-Z0-9])([0-9OIlSBZ]{4})([A-Z0-9])(?![A-Za-z0-9])")
+_VIN_FIX = str.maketrans("OIQ", "010")  # VINs never contain I, O or Q
+
+
+def _registration_number(text: str) -> str:
+    """Vehicle number like MP09 AB 1234, tolerant of OCR swaps in the numeric parts."""
+    for m in _REG.finditer(text):
+        state, rto, series, num = m.groups()
+        if sum(c.isdigit() for c in rto + num) >= 2:
+            return f"{state}{_digits(rto)} {series} {_digits(num)}"
+    return ""
+
+
+def _pan_number(text: str) -> str:
+    """PAN is AAAAA9999A: repair letter/digit swaps by position."""
+    for m in _PAN.finditer(text):
+        letters, digits, last = m.groups()
+        if sum(c.isdigit() for c in digits) >= 2:
+            return letters.translate(_AS_LETTER) + _digits(digits) + last.translate(_AS_LETTER)
+    return ""
 
 
 def _clean_name(value: str) -> str:
@@ -67,7 +157,12 @@ def _clean_name(value: str) -> str:
         r"Address|Gender|Male|Female|Sex|UID|Aadhaar|Valid|Chassis|Engine).*$",
         "", value.strip(), flags=re.IGNORECASE | re.DOTALL,
     )
-    return re.sub(r"\s+", " ", value).strip(" .")
+    value = re.sub(r"\s+", " ", value).strip(" .")
+    letters = sum(c.isalpha() for c in value)
+    digits = sum(c.isdigit() for c in value)
+    if letters < 2 or digits > letters / 3:
+        return ""  # mostly digits: not a name (e.g. a date or ID grabbed by mistake)
+    return value.translate(_AS_LETTER) if digits else value
 
 
 def _grab(text: str, label: str, value: str, flags=re.IGNORECASE) -> str:
@@ -90,6 +185,7 @@ def extract_fields(doc_type: str, text: str, words: list[dict] | None = None) ->
     fields: list[dict] = []
     if not text.strip():
         return fields
+    text = normalize_ocr_text(text)
 
     def add(key: str, label: str, value: str, sensitive: bool = False):
         value = re.sub(r"\s+", " ", value or "").strip()
@@ -121,9 +217,7 @@ def extract_fields(doc_type: str, text: str, words: list[dict] | None = None) ->
             add("address", "Address", m.group(1), sensitive=True)
 
     elif doc_type == "PAN":
-        m = re.search(r"\b([A-Z]{5}\d{4}[A-Z])\b", text)
-        if m:
-            add("pan_number", "PAN", m.group(1), sensitive=True)
+        add("pan_number", "PAN", _pan_number(text), sensitive=True)
         m = re.search(rf"(?<!Father's )(?<!Father )Name\s*[:\-/]*\s*({_NAME})", text)
         if m:
             add("name", "Name", _clean_name(m.group(1)))
@@ -166,14 +260,13 @@ def extract_fields(doc_type: str, text: str, words: list[dict] | None = None) ->
         add("expiry_date", "Expires on", _grab(text, r"Date of Expiry", _DATE))
 
     elif doc_type == "RC":
-        m = re.search(r"\b([A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{1,4})\b", text)
-        if m:
-            add("registration_number", "Registration number", m.group(1))
+        add("registration_number", "Registration number", _registration_number(text))
         add("owner_name", "Owner",
             _clean_name(_grab(text, r"Registered\s*Owner|Owner'?s?\s*Name|Name\s*of\s*Owner",
                               _NAME, 0)))
         add("chassis_number", "Chassis number",
-            _grab(text, r"Chassis\s*(?:No\.?|Number)?", r"[A-Z0-9]{6,25}"), sensitive=True)
+            _grab(text, r"Chassis\s*(?:No\.?|Number)?", r"[A-Z0-9]{6,25}").translate(_VIN_FIX),
+            sensitive=True)
         add("engine_number", "Engine number",
             _grab(text, r"Engine\s*(?:No\.?|Number)?", r"[A-Z0-9]{6,25}"), sensitive=True)
         add("registration_date", "Registered on",
@@ -181,13 +274,14 @@ def extract_fields(doc_type: str, text: str, words: list[dict] | None = None) ->
         add("valid_upto", "Registration valid till",
             _grab(text, r"Regn\.?\s*Valid(?:\s*Upto)?|Registration\s*Valid(?:\s*Upto)?|"
                         r"Valid\s*Upto|Fitness\s*Valid", _DATE))
-        add("fuel_type", "Fuel", _grab(text, r"Fuel(?:\s*Type)?", r"[A-Za-z/]+").upper())
+        fuel = _grab(text, r"Fuel(?:\s*Type)?", r"[A-Za-z0-9/|]+").upper()
+        add("fuel_type", "Fuel", re.sub(r"^(PETROL|DIESEL)[I1L|/](CNG|LPG)$", r"\1/\2", fuel))
         add("maker_model", "Make / model",
             _grab(text, r"Maker'?s?\s*(?:Name|Class)?|Make", r"[A-Z][A-Za-z0-9 .&/\-]{1,40}"))
 
     elif doc_type == "VEHICLE_INSURANCE":
         add("policy_number", "Policy number",
-            _grab(text, r"Policy\s*(?:No\.?|Number)", r"[A-Z0-9][A-Z0-9/\-]{5,30}"),
+            _mostly_numeric(_grab(text, r"Policy\s*(?:No\.?|Number)", r"[A-Z0-9][A-Z0-9/\-]{5,30}")),
             sensitive=True)
         add("insured_name", "Insured",
             _clean_name(_grab(text, r"Insured'?s?\s*Name|Name\s*of\s*(?:the\s*)?Insured",
@@ -200,14 +294,10 @@ def extract_fields(doc_type: str, text: str, words: list[dict] | None = None) ->
         else:
             add("policy_end", "Cover till",
                 _grab(text, r"(?:Policy\s*)?(?:Expiry|End)\s*Date|Valid\s*(?:Till|Upto)", _DATE))
-        m = re.search(r"\b([A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{1,4})\b", text)
-        if m:
-            add("registration_number", "Vehicle", m.group(1))
+        add("registration_number", "Vehicle", _registration_number(text))
 
     elif doc_type == "PUC":
-        m = re.search(r"\b([A-Z]{2}\s?\d{1,2}\s?[A-Z]{1,3}\s?\d{1,4})\b", text)
-        if m:
-            add("registration_number", "Vehicle", m.group(1))
+        add("registration_number", "Vehicle", _registration_number(text))
         add("certificate_number", "Certificate number",
             _grab(text, r"(?:PUC|Certificate)\s*(?:No\.?|Number)", r"[A-Z0-9/\-]{5,30}"))
         add("valid_upto", "Valid till", _grab(text, r"Valid\s*(?:Till|Upto)|Validity", _DATE))

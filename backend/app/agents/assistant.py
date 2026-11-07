@@ -1,4 +1,5 @@
 """The DocMitra assistant: a LangGraph tool-calling agent over the user's documents."""
+import logging
 from datetime import date
 
 from langchain.agents import create_agent
@@ -8,6 +9,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from ..config import settings
 from .tools import ALL_TOOLS
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are DocMitra, a friendly assistant that helps people in India \
 manage personal paperwork: Aadhaar, PAN, driving licence, passport, vehicle RC, \
@@ -30,6 +33,10 @@ Today is {today}."""
 
 class LLMNotConfigured(RuntimeError):
     pass
+
+
+class AssistantUnavailable(RuntimeError):
+    """The model provider failed even after a retry."""
 
 
 def _api_key() -> str | None:
@@ -71,10 +78,18 @@ def _build(model):
 
 def chat(message: str, thread_id: str, model=None) -> dict:
     agent = get_assistant(model)
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": message}]},
-        config={"configurable": {"thread_id": thread_id}},
-    )
+    payload = {"messages": [{"role": "user", "content": message}]}
+    config = {"configurable": {"thread_id": thread_id}}
+    try:
+        result = agent.invoke(payload, config=config)
+    except Exception:
+        # Model providers fail transiently (rate limits, 5xx). Retry once on the same thread so
+        # chat memory is kept; at worst the model sees this question twice.
+        logger.warning("Agent call failed; retrying once", exc_info=True)
+        try:
+            result = agent.invoke(payload, config=config)
+        except Exception as exc:
+            raise AssistantUnavailable("The assistant is temporarily unavailable. Please try again.") from exc
     messages = result["messages"]
     # Tool calls made while answering this message (after the last human turn).
     last_human = max(i for i, m in enumerate(messages) if m.type == "human")

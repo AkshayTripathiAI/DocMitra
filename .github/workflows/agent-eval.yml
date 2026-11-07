@@ -1,0 +1,28 @@
+name: Agent eval
+
+# Runs the real model against the public demo (seeded synthetic documents).
+# No secrets needed: the demo API holds the model key.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * 1" # Mondays 09:00 IST
+
+jobs:
+  agent-eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install httpx
+      - name: Agent eval (fails on any ID leak or pass rate below 80%)
+        run: python -m evals.run_agent --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-eval-report
+          path: backend/evals/reports/agent.json

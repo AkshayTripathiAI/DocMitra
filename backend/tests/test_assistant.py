@@ -66,3 +66,32 @@ def test_add_and_list_reminders():
     tools.add_reminder.invoke({"title": "Renew PUC", "due_date": "2030-01-01"})
     assert tools.add_reminder.invoke({"title": "x", "due_date": "01/01/2030"})["error"]
     assert [r["title"] for r in tools.list_reminders.invoke({})] == ["Renew PUC"]
+
+
+class FlakyModel(FakeToolModel):
+    """Fails on the first call, then answers: simulates a transient provider error."""
+
+    calls: int = 0
+
+    def _generate(self, *args, **kwargs):
+        FlakyModel.calls += 1
+        if FlakyModel.calls == 1:
+            raise RuntimeError("503 from provider")
+        return super()._generate(*args, **kwargs)
+
+
+def test_agent_retries_once_on_transient_model_error():
+    FlakyModel.calls = 0
+    model = FlakyModel(messages=iter([AIMessage(content="Here you go.")]))
+    out = assistant.chat("hi", "t-flaky", model=model)
+    assert out["reply"] == "Here you go."
+    assert FlakyModel.calls == 2
+
+
+def test_chat_returns_503_not_500_when_model_keeps_failing(monkeypatch):
+    def boom(*_a, **_k):
+        raise assistant.AssistantUnavailable("down")
+
+    monkeypatch.setattr(assistant, "chat", boom)
+    r = TestClient(app).post("/api/chat", json={"message": "hi"})
+    assert r.status_code == 503

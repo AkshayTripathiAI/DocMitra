@@ -127,3 +127,37 @@ def test_compare_names_flags_mismatch():
     rows = compare_names([("PAN", "RAHUL SHARMA"), ("Aadhaar", "RAHUL SHARMA"), ("RC", "AMIT JAIN")])
     assert len(rows) == 3
     assert [r["match"] for r in rows] == [True, False, False]
+
+
+# --- OCR normalisation (added with the eval suite) ---------------------------------
+
+from app.extraction.fields import normalize_ocr_text  # noqa: E402
+
+
+def test_normalize_repairs_labels_and_dates():
+    text = normalize_ocr_text("D0B: 0I/O9/1984\nVa1id Ti1l: 3O-06-2O27")
+    assert "DOB: 01/09/1984" in text
+    assert "Valid Till: 30/06/2027" in text
+
+
+def test_normalize_leaves_ids_that_look_like_dates_alone():
+    # No real separator: an ID number, not a date.
+    assert normalize_ocr_text("Ref 1211212025") == "Ref 1211212025"
+    # Not a calendar date.
+    assert normalize_ocr_text("Code 45/19/2025") == "Code 45/19/2025"
+
+
+def test_normalize_strips_hindi_half_of_bilingual_labels():
+    assert normalize_ocr_text("Name / नाम\nPOOJA MISHRA") == "Name\nPOOJA MISHRA"
+
+
+def test_names_with_digit_swaps_are_repaired_and_dates_are_not_names():
+    pan = "INCOME TAX DEPARTMENT\nPermanent Account Number\nABCPS1234K\nName\nRAME5H 5HARMA\nDate of Birth\n14/08/1990"
+    assert field_value(extract_fields("PAN", pan), "name") == "RAMESH SHARMA"
+    no_name = "INCOME TAX DEPARTMENT\nABCPS1234K\nName\n14/08/1990"
+    assert field_value(extract_fields("PAN", no_name), "name") == ""
+
+
+def test_policy_number_letter_swaps_fixed():
+    text = "Policy No: 86I5/72O37396/16/000\nInsured Name: A KUMAR"
+    assert field_value(extract_fields("VEHICLE_INSURANCE", text), "policy_number") == "8615/72037396/16/000"
