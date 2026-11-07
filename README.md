@@ -5,7 +5,7 @@ licence, passport, vehicle RC, insurance and PUC; DocMitra reads them, tracks
 expiry dates, spots name mismatches across documents, and answers questions
 like *"Mujhe passport renew karna hai, kya chahiye?"* using what you actually have.
 
-**Live demo:** _coming soon_ (sample documents for a fictional person; uploads are off in the public demo)
+**Live demo:** https://doc-mitra.vercel.app (sample documents for a fictional person; uploads are off in the public demo)
 
 ![DocMitra documents view with a name-mismatch alert and expiry badges](docs/demo-documents.webp)
 
