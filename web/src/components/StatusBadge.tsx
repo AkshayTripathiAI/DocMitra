@@ -1,23 +1,12 @@
 import type { Status } from "../api";
-
-const STYLES: Record<Status, string> = {
-  valid: "bg-emerald-50 text-emerald-700",
-  expiring: "bg-amber-50 text-amber-700",
-  expired: "bg-red-50 text-red-700",
-  none: "bg-slate-100 text-slate-500",
-};
-
-const LABELS: Record<Status, string> = {
-  valid: "Valid",
-  expiring: "Expiring soon",
-  expired: "Expired",
-  none: "No expiry",
-};
+import { STATUS_STYLES } from "../lib/ui";
 
 export default function StatusBadge({ status }: { status: Status }) {
+  const s = STATUS_STYLES[status];
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[status]}`}>
-      {LABELS[status]}
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${s.pill}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {s.label}
     </span>
   );
 }
