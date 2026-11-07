@@ -1,0 +1,25 @@
+# Render Blueprint: DocMitra API as a public demo (synthetic documents, uploads off).
+services:
+  - type: web
+    name: docmitra-api
+    runtime: docker
+    plan: free
+    region: singapore
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false # Gemini key for the assistant
+      - key: LLM_MODEL
+        value: google_genai:gemini-3.5-flash-lite
+      - key: DEMO_MODE
+        value: "true"
+      - key: CHAT_RATE_LIMIT_PER_HOUR
+        value: "30"
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: DATABASE_URL
+        value: sqlite:////tmp/docmitra.db
+      - key: STORAGE_DIR
+        value: /tmp/docmitra

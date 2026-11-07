@@ -1,0 +1,20 @@
+fastapi>=0.162
+uvicorn[standard]>=0.54
+sqlalchemy>=2.1
+pydantic>=2.14
+pydantic-settings>=2.16
+python-multipart>=0.0.20
+langgraph>=1.2
+langchain>=1.4
+langchain-google-genai>=4.4
+langchain-anthropic>=1.7
+langchain-groq>=1.0
+easyocr==1.7.2
+opencv-python-headless>=4.13
+numpy>=2.5
+pillow>=12.3
+pypdf>=6.21
+
+# dev
+pytest>=9.1
+httpx>=0.28
